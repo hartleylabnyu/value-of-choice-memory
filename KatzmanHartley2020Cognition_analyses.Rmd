@@ -1,0 +1,1225 @@
+---
+title: "Analyses for 'The Value of Choice Facilitates Subsequent Memory Across Development'"
+author: "Perri Katzman"
+date: "1/31/2020"
+output: 
+  html_document:
+    toc: true
+    toc_float: 
+      collapsed: true
+      smooth_scroll: false
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+
+# Load packages
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(aod)
+library(BayesFactor)
+library(sjPlot)
+library(effects)
+library(psycho) #for dprime
+library(ggbeeswarm)
+
+# set ggplot theme
+perri_theme <- function () {
+  theme(
+    panel.border = element_rect(fill = "transparent", color="gray75"),
+    panel.background  = element_blank(),
+    plot.background = element_blank(), 
+    legend.background = element_rect(fill="transparent", colour=NA),
+    legend.key = element_rect(fill="transparent", colour=NA),
+    line = element_blank(),
+    axis.ticks = element_line(color="gray75"),
+    text=element_text(family="Arial"),
+    axis.text = element_text(size = 8),
+    axis.title = element_text(size = 10),
+    title = element_text(size = 10),
+    strip.background = element_blank(),
+    strip.text = element_text(size=10),
+    legend.title=element_text(size=10)
+  )
+}
+
+
+
+# load data
+load('KatzmanHartley2020Cognition_data.RData')
+
+# Notes on data:
+## gYoked = Learnable-Yoked galaxy
+## gRand = Learnable-Dissociable galaxy
+## gEqual = Non-Learnable galaxy
+```
+
+# 3.1 Learning Results
+### 3.1.1 Learning Phase Accuracy
+```{r learingPhaseAccuracy}
+
+# Linear age model:
+## BIC: 6806.6
+summary(learning_linMod <- glmer(p1_correct ~ galaxy*p1_trial_scaled*ageCent +
+                                     (1+galaxy*p1_trial_scaled|subID), 
+                                   data = allSubsBothPhases %>% filter(agency ==1), 
+                                   family = binomial,
+                                   control=glmerControl(optimizer="bobyqa",
+                                             optCtrl=list(maxfun=100000))))
+
+# Quadratic age model:
+## BIC: 6855.1
+summary(learning_quadMod <- glmer(p1_correct ~ galaxy*p1_trial_scaled*(ageCent+ageCentSq) +
+                                     (1+galaxy*p1_trial_scaled|subID), 
+                                   data = allSubsBothPhases %>% filter(agency ==1), 
+                                   family = binomial,
+                                   control=glmerControl(optimizer="bobyqa",
+                                             optCtrl=list(maxfun=100000))))
+
+# In addition to the linear model having a lower BIC (indicating better fit), the inclusion of the quadratic age term does not provide a significantly better fit to the data (X2 = 3.48, df=6, p=0.747)
+anova(learning_linMod,learning_quadMod)
+
+# Get X2 values for significant preditors in linear age model
+# "Terms" refers to the term number in the model above, with (Intercept) being 1
+# effect of gYoked>gEqual (X2 = 37.7, df = 1, P(> X2) = 8.1e-10)
+wald.test(b=learning_linMod@beta, Sigma=vcov(learning_linMod), Terms=3)
+# effect of gRand>gEqual (X2 = 26.9, df = 1, P(> X2) = 2.2e-07)
+wald.test(b=learning_linMod@beta, Sigma=vcov(learning_linMod), Terms=2)
+# effect of (gYoked>gEqual)*trial (X2 = 21.5, df = 1, P(> X2) = 3.6e-06)
+wald.test(b=learning_linMod@beta, Sigma=vcov(learning_linMod), Terms=7)
+# effect of (gRand>gEqual)*trial (X2 = 20.3, df = 1, P(> X2) = 6.8e-06)
+wald.test(b=learning_linMod@beta, Sigma=vcov(learning_linMod), Terms=6)
+
+
+
+# switch factor order of galaxy so that yoked is the baseline
+tmp <- allSubsBothPhases
+tmp$galaxy <- factor(tmp$galaxy, levels = c("gYoked", "gRand", "gEqual"))
+
+summary(learning_linMod_gYbaseline <- glmer(p1_correct ~ galaxy*p1_trial_scaled*ageCent +
+                                     (1+galaxy*p1_trial_scaled|subID), 
+                                   data = tmp %>% filter(agency ==1), 
+                                   family = binomial,
+                                   control=glmerControl(optimizer="bobyqa",
+                                             optCtrl=list(maxfun=100000))))
+
+# gRand>gYoked: X2 = 0.08, df = 1, P(> X2) = 0.78
+wald.test(b=learning_linMod_gYbaseline@beta, Sigma=vcov(learning_linMod_gYbaseline), Terms=2)
+
+```
+
+### Figure 2
+```{r figure2}
+
+# set temporary variable
+d <- allSubsPhase1
+d$galaxy <- factor(d$galaxy, levels = c("gEqual", "gYoked", "gRand"), labels = c("Non-Learnable", "Learnable-Yoked", "Learnable-Dissociable"))
+
+# Plot learning phase accuracy, averaged across all participants, by trial number
+fig2 <- ggplot(data=d %>% filter(agency==1), 
+       aes(x=captNumber,y=p1_correct,group=galaxy, color=galaxy)) + 
+  geom_hline(yintercept = .5, linetype="dashed") +
+  stat_summary(fun.data=mean_se, geom="errorbar", width = .1) +
+  stat_summary(fun.y = mean, geom="line", aes(group=galaxy)) +
+  perri_theme() +
+  xlab("Captain Trial") +
+  ylab("Mean Correct Choices") +
+  labs(color="Galaxy") +
+  scale_color_manual(values=c("#498b6b", "#41739b", "#dd4e47"))+
+  theme(axis.text = element_text(size = 8),
+    axis.title = element_text(size = 10),
+    title = element_text(size = 10),
+    strip.background = element_blank(),
+    strip.text = element_text(size=10),
+    legend.title=element_text(size=10))
+
+# delete temporary variable
+rm(d)
+```
+
+### 3.1.2 Learning Phase Reaction Times
+```{r learningPhaseRTs}
+
+# Log transform RTs so that the distribution is normal
+allSubsBothPhases <- allSubsBothPhases %>% mutate(p1_choiceRT_log = log(p1_choiceRT))
+
+# linear age model
+## BIC: 17840
+## (-) galaxy (gR>gE)*trial p=.028
+## (-) trial*age p=.016
+summary(learning_logRT_linMod <- lmer(p1_choiceRT_log ~ galaxy*p1_trial_scaled*ageCent + 
+                                     (1|subID), 
+                                   data = allSubsBothPhases %>% filter(agency ==1),
+                                   control=lmerControl(optimizer="bobyqa",
+                                             optCtrl=list(maxfun=100000))))
+# quadratic age model
+## BIC: 17884
+## (-) galaxy(gR>gE) p=.0423
+## (+) galaxy(gR>gE)*ageSq p=.0240
+## (-) trial*age p=.0302
+summary(learning_logRT_quadMod <- lmer(p1_choiceRT_log ~ galaxy*p1_trial_scaled*(ageCent+ageCentSq) + 
+                                     (1|subID), 
+                                   data = allSubsBothPhases %>% filter(agency ==1),
+                                   control=lmerControl(optimizer="bobyqa",
+                                             optCtrl=list(maxfun=100000))))
+# models not significantly different (X2=7.40, df=6, p=.285)
+## linear age model is a better fit
+anova(learning_logRT_linMod, learning_logRT_quadMod) 
+
+
+# Get sig effects of linear-age model
+## (gRand>gEqual)*trial: X2 = 4.8, df = 1, P(> X2) = 0.028
+wald.test(b=learning_logRT_linMod@beta, Sigma=vcov(learning_logRT_linMod), Terms=6)
+## trial*age: X2 = 5.8, df = 1, P(> X2) = 0.016
+wald.test(b=learning_logRT_linMod@beta, Sigma=vcov(learning_logRT_linMod), Terms=10)
+
+
+# switch so that gYoked is baseline
+tmp <- allSubsBothPhases %>% filter(agency ==1)
+tmp$galaxy <- factor(tmp$galaxy, levels = c("gYoked","gRand", "gEqual"))
+# when baseline is switched to gRand, there are no sig diffs between rRand & gYoked
+summary(learning_logRT_linMod_gYbaseline <- lmer(p1_choiceRT_log ~ 
+                                                   galaxy*p1_trial_scaled*ageCent + 
+                                     (1|subID), 
+                                   data = tmp,
+                                   control=lmerControl(optimizer="bobyqa",
+                                             optCtrl=list(maxfun=100000))))
+# delete temporary variable
+rm(tmp)
+
+```
+
+# 3.2 Memory Results
+### 3.2.1 Recognition Memory
+##### Excluding Reward
+```{r recognitionMemory_noReward}
+
+# Corrected Hit Rate, grouped by galaxy and agency (ignoring reward)
+
+# label each response as hit/miss/fa/cr
+allSubsPhase2 <- allSubsPhase2 %>% mutate(respType = case_when(
+  isOld==1 & isOld_saidOld==1 ~ "hit",
+  isOld==1 & isOld_saidOld==0 ~ "miss",
+  isOld==0 & isOld_saidOld==1 ~ "fa",
+  isOld==0 & isOld_saidOld==0 ~ "cr"
+))
+
+
+# isolate "old" items
+testItems <- allSubsPhase2 %>% filter(isOld==1) %>% group_by(subID,age,ageCent,ageCentSq,galaxy,agency) %>% dplyr::summarize(
+  hits = sum(respType=="hit"),
+  misses = sum(respType=="miss"),
+  nOld = sum(isOld),
+  HR = hits/nOld
+  )
+
+# isolate "new" items
+lureItems <- allSubsPhase2 %>% filter(isOld==0) %>% group_by(subID,age,ageCent,ageCentSq) %>% dplyr::summarize(
+  fas = sum(respType=="fa"),
+  crs = sum(respType=="cr"),
+  nNew = sum(isOld==0),
+  FAR = fas/nNew
+  )
+
+# merge old and new items; get agency benefit for each participant in each galaxy
+CHR_byGalaxyAgency <- merge(testItems,lureItems) %>% 
+  mutate(CHR = HR-FAR) %>% 
+  group_by(subID,galaxy) %>% 
+  mutate(agencyBenefit = CHR[agency=="captain"] - CHR[agency=="autopilot"])
+
+
+# Agency Benefit: corrected Hit Rate (cHR) for captain trials - cHR for autopilot trials
+#filter so 1 agencyBenefit score per galaxy
+CHR_byGalaxyAgency_captOnly <- CHR_byGalaxyAgency %>% filter(agency=="captain") 
+
+# linear age model
+recog_noReward_linMod <- lmer(CHR ~ galaxy*agency*ageCent + 
+                                (1+agency|subID), 
+                              data = CHR_byGalaxyAgency,
+                             control=lmerControl(optimizer="bobyqa", 
+                                                 optCtrl=list(maxfun=100000)))
+
+# quadratic age model
+recog_noReward_quadMod <- lmer(CHR ~ galaxy*agency*(ageCent+ageCentSq) + 
+                                 (1+agency|subID), 
+                               data = CHR_byGalaxyAgency,
+                             control=lmerControl(optimizer="bobyqa", 
+                                                 optCtrl=list(maxfun=100000)))
+
+# compare models
+## No sig diff (X2=4.33, df=6, p=.632)
+## BIC Linear = -639.40, BIC Quad = -605.59
+anova(recog_noReward_linMod,recog_noReward_quadMod)
+
+# get stats for linear model
+# effect of galaxy(gR>gE)*agency
+# X2 = 4.3, df = 1, P(> X2) = 0.038
+wald.test(b=recog_noReward_linMod@beta, Sigma=vcov(recog_noReward_linMod), Terms=6)
+
+
+# t-test to confirm diff between CHR for captain and autopilot in gRand
+## t = 4.9758, df = 95, p-value = 2.889e-06
+t.test(CHR_byGalaxyAgency$CHR[CHR_byGalaxyAgency$galaxy=="gRand" &
+                                CHR_byGalaxyAgency$agency=="captain"],
+  CHR_byGalaxyAgency$CHR[CHR_byGalaxyAgency$galaxy=="gRand" &
+                           CHR_byGalaxyAgency$agency=="autopilot"],
+  paired=TRUE)
+
+## Bayes Factor: 5128.175 --> strong evidence for H1
+ttestBF(x=CHR_byGalaxyAgency$CHR[CHR_byGalaxyAgency$galaxy=="gRand" &
+                                CHR_byGalaxyAgency$agency=="captain"],
+        y=CHR_byGalaxyAgency$CHR[CHR_byGalaxyAgency$galaxy=="gRand" &
+                           CHR_byGalaxyAgency$agency=="autopilot"],
+        paired=TRUE)
+
+```
+
+##### Including Reward
+
+```{r recognitionMemory_withReward}
+# Corrected Hit Rate, grouped by galaxy, agency, and reward
+
+# isolate "old" items
+testItems <- allSubsPhase2 %>% filter(isOld==1) %>% group_by(subID,age,ageCent,ageCentSq,ageGrp,galaxy,agency,reward) %>% 
+  dplyr::summarize(
+    hits = sum(respType=="hit"),
+    misses = sum(respType=="miss"),
+    nOld = sum(isOld),
+    HR = hits/nOld
+  )
+
+# isolate "new" items
+lureItems <- allSubsPhase2 %>% filter(isOld==0) %>% group_by(subID,age,ageCent,ageCentSq,ageGrp) %>% 
+  dplyr::summarize(
+    fas = sum(respType=="fa"),
+    crs = sum(respType=="cr"),
+    nNew = sum(isOld==0),
+    FAR = fas/nNew
+  )
+
+# merge and summarize for table
+CHR_byGalaxyAgencyReward_table <- merge(testItems,lureItems) %>% 
+  mutate(CHR = HR-FAR) %>% 
+  group_by(ageGrp,galaxy,agency,reward) %>% 
+  summarize(meanHR=round(mean(HR),3),
+            sdHR=round(sd(HR),3),
+            meanFAR=round(mean(FAR),3),
+            sdFAR=round(sd(FAR),3))
+
+# merge old and new items; get agency benefit for each participant in each galaxy
+CHR_byGalaxyAgencyReward <- merge(testItems,lureItems) %>% 
+  mutate(CHR = HR-FAR) %>% 
+  group_by(subID,galaxy,reward) %>% 
+  mutate(agencyBenefit = CHR[agency=="captain"] - CHR[agency=="autopilot"])
+
+
+# linear age model
+recog_wReward_linMod <- lmer(CHR ~ galaxy*agency*reward*ageCent + 
+                                (1+agency*reward|subID), 
+                              data = CHR_byGalaxyAgencyReward,
+                             control=lmerControl(optimizer="bobyqa", 
+                                                 optCtrl=list(maxfun=100000)))
+
+# quadratic age model
+recog_wReward_quadMod <- lmer(CHR ~ galaxy*agency*reward*(ageCent+ageCentSq) + 
+                                 (1+agency*reward|subID), 
+                               data = CHR_byGalaxyAgencyReward,
+                             control=lmerControl(optimizer="bobyqa", 
+                                                 optCtrl=list(maxfun=100000)))
+
+# compare models
+## No sig diff (X2=8.95, df=12, p=.707)
+## BIC Linear = -540.2, BIC Quad = -464.6
+anova(recog_wReward_linMod,recog_wReward_quadMod)
+
+# Get stats for linear model
+# effect of treasure: X2 = 5.2, df = 1, P(> X2) = 0.023
+wald.test(b=recog_wReward_linMod@beta, Sigma=vcov(recog_wReward_linMod), Terms=5)
+
+# interaction of agency x galaxy(gR>gE): X2 = 4.9, df = 1, P(> X2) = 0.026
+wald.test(b=recog_wReward_linMod@beta, Sigma=vcov(recog_wReward_linMod), Terms=7)
+
+
+# T-Tests
+# gRand: treas: capt>auto
+## t(95)=2.488, p=.0146
+t.test(CHR_byGalaxyAgencyReward$CHR[CHR_byGalaxyAgencyReward$galaxy=="gRand" &
+                                         CHR_byGalaxyAgencyReward$reward==1 &
+                                         CHR_byGalaxyAgencyReward$agency=="captain"],
+       CHR_byGalaxyAgencyReward$CHR[CHR_byGalaxyAgencyReward$galaxy=="gRand" &
+                                         CHR_byGalaxyAgencyReward$reward==1 &
+                                         CHR_byGalaxyAgencyReward$agency=="autopilot"],
+       paired=TRUE)
+
+## Bayes Factor: 2.09 --> annecdotal evidence for H1
+ttestBF(CHR_byGalaxyAgencyReward$CHR[CHR_byGalaxyAgencyReward$galaxy=="gRand" &
+                                         CHR_byGalaxyAgencyReward$reward==1 &
+                                         CHR_byGalaxyAgencyReward$agency=="captain"],
+       CHR_byGalaxyAgencyReward$CHR[CHR_byGalaxyAgencyReward$galaxy=="gRand" &
+                                         CHR_byGalaxyAgencyReward$reward==1 &
+                                         CHR_byGalaxyAgencyReward$agency=="autopilot"],
+       paired=TRUE)
+
+
+
+
+# gRand: trash: capt>auto
+# t(95)=4.39, p=2.91e-05
+t.test(CHR_byGalaxyAgencyReward$CHR[CHR_byGalaxyAgencyReward$galaxy=="gRand" &
+                                         CHR_byGalaxyAgencyReward$reward==0 &
+                                         CHR_byGalaxyAgencyReward$agency=="captain"],
+       CHR_byGalaxyAgencyReward$CHR[CHR_byGalaxyAgencyReward$galaxy=="gRand" &
+                                         CHR_byGalaxyAgencyReward$reward==0 &
+                                         CHR_byGalaxyAgencyReward$agency=="autopilot"],
+       paired=TRUE)
+
+## Bayes Factor: 588.03 --> extreme evidence for H1
+ttestBF(CHR_byGalaxyAgencyReward$CHR[CHR_byGalaxyAgencyReward$galaxy=="gRand" &
+                                         CHR_byGalaxyAgencyReward$reward==0 &
+                                         CHR_byGalaxyAgencyReward$agency=="captain"],
+       CHR_byGalaxyAgencyReward$CHR[CHR_byGalaxyAgencyReward$galaxy=="gRand" &
+                                         CHR_byGalaxyAgencyReward$reward==0 &
+                                         CHR_byGalaxyAgencyReward$agency=="autopilot"],
+       paired=TRUE)
+
+
+
+# Switch so gYoked is the baseline
+tmp <- CHR_byGalaxyAgencyReward
+tmp$galaxy <- factor(tmp$galaxy, levels = c("gYoked","gRand", "gEqual"))
+# linear age model with gYoked baseline
+summary(recog_wReward_linMod_gYbaseline <- lmer(CHR ~ galaxy*agency*reward*ageCent + 
+                                (1+agency*reward|subID), 
+                              data = tmp,
+                             control=lmerControl(optimizer="bobyqa", 
+                                                 optCtrl=list(maxfun=100000))))
+
+# effect of galaxy(gR>gY)*agency
+# X2 = 6.8, df = 1, P(> X2) = 0.009
+wald.test(b=recog_wReward_linMod_gYbaseline@beta, Sigma=vcov(recog_wReward_linMod_gYbaseline), Terms=7)
+
+```
+### Figure 3
+```{r figure3}
+
+d2 <- CHR_byGalaxyAgencyReward
+d2$galaxy <- factor(d2$galaxy, levels = c("gEqual", "gYoked", "gRand"), 
+                        labels = c("Non-Learnable", "Learnable-Yoked", "Learnable-Dissociable"))
+d2$agency <- factor(d2$agency, levels = c("autopilot", "captain"), 
+                    labels = c("No Agency (Autopilot)", "Agency (Captain)"))
+d2$reward <- factor(d2$reward, levels = c(1, 0), labels = c("Treasure", "Trash"))
+d2$ageGrp <- factor(d2$ageGrp, levels = c("child", "teen", "adult"), 
+                    labels = c("Children", "Adolescents", "Adults"))
+
+fig3 <- ggplot(data=d2 %>% 
+         group_by(agency,galaxy,reward), 
+       aes(x=as.factor(reward), y = CHR, group = agency, 
+           color = agency, fill = agency)) + 
+  geom_quasirandom(dodge.width = .5,
+                   width = .12,
+                   alpha = 0.2,
+                   size = .6) + 
+  stat_summary(fun.data ="mean_se", geom="errorbar", size = .6, width = .2,
+               position=position_dodge(.5)) + 
+  stat_summary(fun.y ="mean", geom="point", size = .8,
+               position=position_dodge2(.5)) + 
+  facet_wrap(~galaxy) + 
+  perri_theme() + 
+  theme(axis.title.x=element_blank(),
+        axis.text = element_text(size = 8),
+    axis.title = element_text(size = 10),
+    title = element_text(size = 10),
+    strip.background = element_blank(),
+    strip.text = element_text(size=10),
+    legend.title=element_text(size=10)) +
+  ylab("Corrected Hit Rate") + 
+  labs(fill="Agency Condition", color="Agency Condition") +
+  scale_color_manual(values=c("#AEA8D3", "#FC6917"))
+
+```
+
+### 3.2.2 Source Memory
+```{r sourceMemory}
+
+# linear age model
+## BIC: 8920.3
+## significant effects:
+## reward (-) p=.001
+## galaxy(gR>gE)*age (-) p=.044
+## reward*galaxy(gR>gE)*age (+) p=.022
+summary(galSourceModel_lin <- glmer(value_isCorrect ~ reward*agency*galaxy*ageCent + 
+                                    (reward|subID) + (1|item), 
+                                  data = allSubsBothPhases %>% filter(isOld_saidOld==1), family = binomial,
+                                  control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=100000))))
+
+# Quadratic age model
+## BIC: 9005.2
+## significant effects:
+## ageSq (+) p=.038
+## reward*ageSq (-) p=.0018
+summary(galSourceModel_quad <- glmer(value_isCorrect ~ reward*agency*galaxy*(ageCent+ageCentSq) + 
+                                    (reward|subID) + (1|item), 
+                                  data = allSubsBothPhases %>% filter(isOld_saidOld==1), family = binomial,
+                                  control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=100000))))
+
+
+# sig different: 
+# X2=21.198, df= 12, p=.04756
+# However, BIC is lower for linear than for quadratic
+anova(galSourceModel_lin, galSourceModel_quad)
+
+
+# in quad model:
+## age Sq: X2 = 4.3, df = 1, P(> X2) = 0.038
+wald.test(b=galSourceModel_quad@beta, Sigma=vcov(galSourceModel_quad), Terms=7)
+
+## reward*ageSq: X2 = 9.8, df = 1, P(> X2) = 0.0018
+wald.test(b=galSourceModel_quad@beta, Sigma=vcov(galSourceModel_quad), Terms=14)
+
+
+# in linear model
+## reward: X2 = 10.6, df = 1, P(> X2) = 0.0011
+wald.test(b=galSourceModel_lin@beta, Sigma=vcov(galSourceModel_lin), Terms=2)
+
+## galaxy(gR>gE)*age: X2 = 4.0, df = 1, P(> X2) = 0.044
+wald.test(b=galSourceModel_lin@beta, Sigma=vcov(galSourceModel_lin), Terms=14)
+
+## reward*galaxy(gR>gE)*age: X2 = 5.3, df = 1, P(> X2) = 0.022
+wald.test(b=galSourceModel_lin@beta, Sigma=vcov(galSourceModel_lin), Terms=19)
+
+# remove temporary variable
+rm(d2)
+
+
+# Predicting decision criterion (C)
+d = allSubsPhase2 %>% filter(isOld_saidOld==1, isOld==1)
+
+# get hits, misses, fas, and crs for each person
+treasBiasData_byGalaxy <- d %>% group_by(subID, age, ageCent, ageCentSq, galaxy) %>% 
+  summarize(nTreas = sum(reward==1),
+            nTrash = sum(reward==0),
+            nHit = sum(value_saidTreas[reward==1]),
+            nMiss = sum(value_saidTreas[reward==1]==0),
+            nFA = sum(value_saidTreas[reward==0]),
+            nCR = sum(value_saidTreas[reward==0]==0)
+            )
+# calculate dprime and c
+dPrimeData <- dprime(n_hit = treasBiasData_byGalaxy$nHit,
+                     n_fa = treasBiasData_byGalaxy$nFA,
+                     n_miss = treasBiasData_byGalaxy$nMiss,
+                     n_cr = treasBiasData_byGalaxy$nCR,
+                     n_targets = treasBiasData_byGalaxy$nTreas,
+                     n_distractors = treasBiasData_byGalaxy$nTrash,
+                     adjusted = TRUE
+                     )
+# add dprime and c to dataframe
+treasBiasData_byGalaxy$c = dPrimeData$c
+
+# predict c from age and galaxy
+summary(sourceMemC <- lmer(c ~ galaxy*(ageCent+ageCentSq) + (1|subID), data = treasBiasData_byGalaxy))
+# X2 = 11.1, df = 1, P(> X2) = 0.00085
+wald.test(b=sourceMemC@beta, Sigma=vcov(sourceMemC), Terms=5)
+
+```
+
+# 3.3 Post-task Questions
+## 3.3.1 Estimating Reward Probability
+```{r estimatingRewardProbability}
+
+# Gather Data
+postTask <- read_csv("KatzmanHartley2020Cognition_postTaskResponses.csv", col_names = TRUE)
+postTask$subID <- as.factor(postTask$subID)
+postTask$galaxy <- as.factor(postTask$Galaxy)
+postTask <- postTask %>% select(-c(Galaxy))
+postTask$ageCent <- scale(postTask$age, center=TRUE, scale=TRUE) #z-scored age
+postTask$ageCentSq <- postTask$ageCent^2
+postTask_byGalaxy = postTask %>% filter(HighOrLow=="Hi")
+postTask_byPerson = postTask_byGalaxy %>% filter(galaxy=="gRand")
+
+
+# Estimating Reward Probability
+
+## Calculate summary statistics
+postTask_estRewardProb <- postTask %>% group_by(galaxy,HighOrLow) %>% 
+  summarize(rewardProbM = mean(RewardProb), rewardProbSD=sd(RewardProb))
+
+
+# gYoked (Learnable-Yoked)
+## Hi: M=5.08, SD=1.40; Lo: M=3.36, SD=1.44
+postTask_estRewardProb %>% filter(galaxy=="gYoked")
+
+## t-test: t = 8.1925, df = 95, p-value = 1.181e-12
+t.test(postTask$RewardProb[postTask$galaxy=="gYoked" &
+                                      postTask$HighOrLow=="Hi"],
+       postTask$RewardProb[postTask$galaxy=="gYoked" &
+                             postTask$HighOrLow=="Lo"],
+       paired = TRUE)
+##BF: 6727117845
+ttestBF(postTask$RewardProb[postTask$galaxy=="gYoked" &
+                                      postTask$HighOrLow=="Hi"],
+       postTask$RewardProb[postTask$galaxy=="gYoked" &
+                             postTask$HighOrLow=="Lo"],
+       paired = TRUE)
+
+
+# gRand (Learnable-Dissociable)
+## Hi: M=5.27, SD=1.66; Lo: M=3.40, SD=1.70
+postTask_estRewardProb %>% filter(galaxy=="gRand")
+
+## t-test: t = 6.4011, df = 95, p-value = 5.824e-09
+t.test(postTask$RewardProb[postTask$galaxy=="gRand" &
+                                      postTask$HighOrLow=="Hi"],
+       postTask$RewardProb[postTask$galaxy=="gRand" &
+                             postTask$HighOrLow=="Lo"],
+       paired = TRUE)
+##BF: 1871391
+ttestBF(postTask$RewardProb[postTask$galaxy=="gRand" &
+                                      postTask$HighOrLow=="Hi"],
+       postTask$RewardProb[postTask$galaxy=="gRand" &
+                             postTask$HighOrLow=="Lo"],
+       paired = TRUE)
+
+
+# gEqual (Non-Learnable)
+## Hi: M=4.23, SD=1.51; Lo: M=4.29, SD=1.57
+postTask_estRewardProb %>% filter(galaxy=="gEqual")
+
+## t-test: t = -0.23674, df = 95, p-value = 0.8134
+t.test(postTask$RewardProb[postTask$galaxy=="gEqual" &
+                                      postTask$HighOrLow=="Hi"],
+       postTask$RewardProb[postTask$galaxy=="gEqual" &
+                             postTask$HighOrLow=="Lo"],
+       paired = TRUE)
+##BF: 0.1160192
+ttestBF(postTask$RewardProb[postTask$galaxy=="gEqual" &
+                                      postTask$HighOrLow=="Hi"],
+       postTask$RewardProb[postTask$galaxy=="gEqual" &
+                             postTask$HighOrLow=="Lo"],
+       paired = TRUE)
+```
+## 3.3.2 Subjective Control
+```{r subjectiveControl}
+
+# Subjective Control
+
+# run repeated-measurures one-way anova on controllability
+## marginal effect of galaxy p=.0559
+summary(aov(Controllability ~ galaxy +Error(subID), data = postTask_byGalaxy))
+
+## BF: 0.5928019 ±0.85%
+anovaBF(Controllability ~ galaxy + subID, data=postTask_byGalaxy, whichRandom = "subID")
+
+# Mean and St Dev Controllability ratings for each galaxy
+## gEqual: 4.53 (1.55)
+## gRand: 5.02 (1.56)
+## gYoked: 4.66 (1.54)
+postTask_byGalaxy %>% group_by(galaxy) %>% 
+  summarize(meanCtrl = mean(Controllability), sdCtrl = sd(Controllability))
+
+
+# gRand > gEqual
+## ttest: t = 2.4574, df = 95, p-value = 0.01581
+t.test(postTask_byGalaxy$Controllability[postTask_byGalaxy$galaxy=="gRand"],
+       postTask_byGalaxy$Controllability[postTask_byGalaxy$galaxy=="gEqual"],
+       paired = TRUE)
+## BF: 1.948379 ±0%
+ttestBF(postTask_byGalaxy$Controllability[postTask_byGalaxy$galaxy=="gRand"],
+       postTask_byGalaxy$Controllability[postTask_byGalaxy$galaxy=="gEqual"],
+       paired = TRUE)
+
+# gYoked > gEqual
+## ttest: t = 0.58633, df = 95, p-value = 0.559
+t.test(postTask_byGalaxy$Controllability[postTask_byGalaxy$galaxy=="gYoked"],
+       postTask_byGalaxy$Controllability[postTask_byGalaxy$galaxy=="gEqual"],
+       paired = TRUE)
+## BF: 0.1333991 ±0%
+ttestBF(postTask_byGalaxy$Controllability[postTask_byGalaxy$galaxy=="gYoked"],
+       postTask_byGalaxy$Controllability[postTask_byGalaxy$galaxy=="gEqual"],
+       paired = TRUE)
+
+
+# Does subjective controllability predict agency benefit?
+
+# prepare data
+agencyBenefit_byPerson <- CHR_byGalaxyAgency %>% filter(agency=="captain") %>% select(subID,galaxy,agencyBenefit)
+postTask_agencyBenefit <- merge(agencyBenefit_byPerson,postTask_byGalaxy,by = c("subID","galaxy"))
+
+# controllability does not predict agency Benefit. p=.152
+summary(ctrlAgencyBenefit_model <- lmer(agencyBenefit ~ ageCent*zControllability + (1|subID), data=postTask_agencyBenefit))
+
+# no effect of controllability: X2 = 2.1, df = 1, P(> X2) = 0.15
+wald.test(b=ctrlAgencyBenefit_model@beta, Sigma=vcov(ctrlAgencyBenefit_model), Terms=3)
+
+```
+
+## 3.3.3 Context Preference
+```{r contextPreference}
+
+# Convert rankings to numeric
+## 1 = first choice
+## 2 = second choice
+## 3 = third choice
+postTask_byGalaxy <-
+  postTask_byGalaxy %>% mutate(
+  prefScore = case_when(
+    bestGalaxy=="gRand" & galaxy=="gRand" ~ 1,
+    secondbest=="gRand" & galaxy=="gRand" ~ 2,
+    bestGalaxy!="gRand" & secondbest!="gRand" & galaxy=="gRand" ~ 3,
+    
+    bestGalaxy=="gYoked" & galaxy=="gYoked" ~ 1,
+    secondbest=="gYoked" & galaxy=="gYoked" ~ 2,
+    bestGalaxy!="gYoked" & secondbest!="gYoked" & galaxy=="gYoked" ~ 3,
+    
+    bestGalaxy=="gEqual" & galaxy=="gEqual" ~ 1,
+    secondbest=="gEqual" & galaxy=="gEqual" ~ 2,
+    bestGalaxy!="gEqual" & secondbest!="gEqual" & galaxy=="gEqual" ~ 3,
+  )
+)
+
+# summary stats: mean (sd)
+## gEqual: 2.25 (.754)
+## gRand: 1.78 (.797)
+## gYoked: 1.97 (.839)
+postTask_byGalaxy %>% group_by(galaxy) %>% summarize(meanPref = mean(prefScore), sdPref=sd(prefScore))
+
+# Predict preference score from age and galaxy
+summary(prefScoreMod <- lm(prefScore ~ galaxy*ageCent, data = postTask_byGalaxy))
+
+# gRand>gEqual
+# X2 = 16.6, df = 1, P(> X2) = 4.5e-05
+wald.test(b=prefScoreMod$coefficients, Sigma=vcov(prefScoreMod), Terms=2)
+
+# gYoked>gEqual
+# X2 = 6.0, df = 1, P(> X2) = 0.014
+wald.test(b=prefScoreMod$coefficients, Sigma=vcov(prefScoreMod), Terms=3)
+
+
+# compare gRand>gYoked
+## ttest: t = -1.2642, df = 95, p-value = 0.2093
+t.test(postTask_byGalaxy$prefScore[postTask_byGalaxy$galaxy=="gRand"],
+       postTask_byGalaxy$prefScore[postTask_byGalaxy$galaxy=="gYoked"],
+       paired = TRUE)
+## BF: 0.2439838 ±0%
+ttestBF(postTask_byGalaxy$prefScore[postTask_byGalaxy$galaxy=="gRand"],
+       postTask_byGalaxy$prefScore[postTask_byGalaxy$galaxy=="gYoked"],
+       paired = TRUE)
+
+
+# directly test relationship btwn prefScore and controllability
+
+# collapsing across galaxy, pref score significantly predicts controllability 
+summary(prefModel2 <- lmer(Controllability ~ prefScore*ageCent + (1|subID), data = postTask_byGalaxy))
+# X2 = 44.5, df = 1, P(> X2) = 2.6e-11
+wald.test(b=prefModel2@beta, Sigma=vcov(prefModel2), Terms=2)
+
+```
+
+
+# Supplementary Information
+## Supplementary Figure 1
+```{r suppFig1}
+#  Learning Phase performance, averaged across all participants in each age group (children: age 8-12, adolescents: age 13-17, adults: age 18-25) for each Captain trial for each galaxy. Chance performance denoted by dashed line. Error bars denote standard error.
+
+# gather data
+d <- allSubsPhase1
+d$galaxy <- factor(d$galaxy, levels = c("gEqual", "gYoked", "gRand"), labels = c("Non-Learnable", "Learnable-Yoked", "Learnable-Dissociable"))
+d$ageGrp <- factor(d$ageGrp, levels = c("child", "teen", "adult"), 
+                    labels = c("Children", "Adolescents", "Adults"))
+
+# separated by age group
+suppFig1 <- ggplot(data=d %>% filter(agency==1), 
+       aes(x=captNumber,y=p1_correct,group=galaxy, color=galaxy)) + 
+  geom_hline(yintercept = .5, linetype="dashed") +
+  stat_summary(fun.data=mean_se, geom="errorbar", width = .1) +
+  stat_summary(fun.y = mean, geom="line", aes(group=galaxy)) +
+  facet_wrap(~ageGrp) +
+  perri_theme() +
+  xlab("Captain Trial") +
+  ylab("Mean Correct Choices") +
+  labs(color="Galaxy") +
+  scale_color_manual(values=c("#498b6b", "#41739b", "#dd4e47"))
+
+
+```
+
+## Supplementary Figure 2
+```{r suppFig2}
+
+# Interaction plot
+
+# get fit
+galaxyAgencyInteraction <- as.data.frame(effect(term="galaxy*agency",mod=recog_wReward_linMod))
+
+# re-name factor levels
+galaxyAgencyInteraction$galaxy <- factor(galaxyAgencyInteraction$galaxy, 
+                                             levels = c("gEqual", "gYoked", "gRand"), 
+                                             labels = c("Non-Learnable", 
+                                                        "Learnable-Yoked", 
+                                                        "Learnable-Dissociable"))
+galaxyAgencyInteraction$agency <- factor(galaxyAgencyInteraction$agency, 
+                                             levels = c("autopilot", "captain"), 
+                                             labels = c("No Agency (Autopilot)", 
+                                                        "Agency (Captain)"))
+# plot it!
+suppFig2 <- ggplot(data=galaxyAgencyInteraction, 
+       aes(x=agency,y=fit,color=galaxy,group=galaxy)) +
+  geom_pointrange(stat="identity", 
+                  position=position_dodge2(width=.1),
+                  aes(ymin=fit-se, ymax=fit+se), 
+                  size=.8) + 
+  geom_line(size=1.2, position=position_dodge(width=.1)) +
+  geom_ribbon(aes(ymin=fit-se, ymax=fit+se, fill=galaxy), 
+              alpha=.2, 
+              position=position_dodge(width=.1), 
+              linetype=0) +
+  perri_theme() +
+  labs(color="Galaxy Condition", fill="Galaxy Condition") +
+  theme(axis.title.x=element_blank()) +
+  ylab("Corrected Hit Rate") +
+  scale_color_manual(values=c("#498b6b", "#41739b", "#dd4e47")) +
+  scale_fill_manual(values=c("#498b6b", "#41739b", "#dd4e47"))
+
+```
+
+## Supplementary Figure 3
+```{r suppFig3}
+
+d2 <- CHR_byGalaxyAgencyReward
+d2$galaxy <- factor(d2$galaxy, levels = c("gEqual", "gYoked", "gRand"), 
+                        labels = c("Non-Learnable", "Learnable-Yoked", "Learnable-Dissociable"))
+d2$agency <- factor(d2$agency, levels = c("autopilot", "captain"), 
+                    labels = c("No Agency (Autopilot)", "Agency (Captain)"))
+d2$reward <- factor(d2$reward, levels = c(1, 0), labels = c("Treasure", "Trash"))
+d2$ageGrp <- factor(d2$ageGrp, levels = c("child", "teen", "adult"), 
+                    labels = c("Children", "Adolescents", "Adults"))
+
+suppFig3 <- ggplot(data=d2 %>% 
+         group_by(agency,galaxy,reward), 
+       aes(x=as.factor(reward), y = CHR, group = agency, 
+           color = agency, fill = agency)) + 
+  geom_quasirandom(dodge.width = .5,
+                   width = .12,
+                   alpha = .2,
+                   size = .6) +
+  stat_summary(fun.data ="mean_se", geom="errorbar", size = .6, width = .2,
+               position=position_dodge(.5)) + 
+  stat_summary(fun.y ="mean", geom="point", size = .8,
+               position=position_dodge2(.5)) + 
+  facet_wrap(. ~ ageGrp +galaxy) + 
+  perri_theme() + 
+  theme(axis.title.x=element_blank()) +
+  ylab("Corrected Hit Rate") + 
+  labs(fill="Agency Condition", color="Agency Condition") +
+  scale_color_manual(values=c("#AEA8D3", "#FC6917"))
+
+```
+
+## Supplementary Figure 4
+```{r suppFig4}
+d <- allSubsBothPhases %>% filter(isOld_saidOld==1) %>% 
+         group_by(subID,reward,age) %>% summarize(meanAccuracy=mean(value_isCorrect))
+d$reward <- factor(d$reward, levels = c(1, 0), labels = c("Treasure", "Trash"))
+suppFig4 <- ggplot(data= d, aes(x=age,y=meanAccuracy, group=reward, color=reward, fill=reward)) + 
+  geom_point() + 
+  stat_smooth(method="lm", formula = y ~ x + I(x^2)) +
+  labs(fill="Item Type", 
+       color="Item Type",
+       x="Age",
+       y="Mean Accuracy") +
+  perri_theme() +
+  scale_color_manual(values=c("#59be9f", "#6b9ab2")) +
+  scale_fill_manual(values=c("#59be9f", "#6b9ab2"))
+
+```
+
+## Supplementary Table 1
+```{r suppTable1}
+# see 3.2.1 Recognition Memory, chunk title "recognitionMemory_withReward"
+CHR_byGalaxyAgencyReward_table
+```
+
+## Supplementary Analyses
+
+### Excluding Participants for Low Performance
+```{r exclLowPerform}
+
+# isolate "old" items
+testItems_all <- allSubsPhase2 %>% 
+  filter(isOld==1) %>% 
+  group_by(subID,age,ageCent,ageCentSq) %>% 
+  dplyr::summarize(
+    hits = sum(respType=="hit"),
+    misses = sum(respType=="miss"),
+    nOld = sum(isOld),
+    HR = hits/nOld
+  )
+
+# isolate "new" items
+lureItems_all <- allSubsPhase2 %>% 
+  filter(isOld==0) %>%
+  group_by(subID,age,ageCent,ageCentSq) %>% 
+  dplyr::summarize(
+    fas = sum(respType=="fa"),
+    crs = sum(respType=="cr"),
+    nNew = sum(isOld==0),
+    FAR = fas/nNew
+  )
+
+# merge old and new items; get agency benefit for each participant in each galaxy
+CHR_all <- merge(testItems_all,lureItems_all) %>% 
+  mutate(CHR = HR-FAR, 
+         CHRaboveZero = CHR>0)
+
+# subIDs and key of whether overall CHR is above zero
+CHRaboveZero_df <- CHR_all %>% select(c(subID,CHRaboveZero))
+
+
+# merge CHRaboveZero_df with CHR_byGalaxyAgencyReward
+CHR_byGalaxyAgencyReward <- merge(CHR_byGalaxyAgencyReward,CHRaboveZero_df)
+
+
+# re-run models without subs for whom overall CHR is less than or equal to 0
+
+# linear age model
+recog_wReward_linMod_CHRaboveZero <- lmer(CHR ~ galaxy*agency*reward*ageCent + 
+                                (1+agency*reward|subID), 
+                              data = CHR_byGalaxyAgencyReward %>% 
+                               filter(CHRaboveZero==TRUE),
+                             control=lmerControl(optimizer="bobyqa", 
+                                                 optCtrl=list(maxfun=100000)))
+
+# effect of reward
+## X2 = 5.4, df = 1, P(> X2) = 0.02
+wald.test(b=recog_wReward_linMod_CHRaboveZero@beta, Sigma=vcov(recog_wReward_linMod_CHRaboveZero), Terms=5)
+
+# interaction of agency x galaxy(gR>gE)
+## X2 = 4.6, df = 1, P(> X2) = 0.031
+wald.test(b=recog_wReward_linMod_CHRaboveZero@beta, Sigma=vcov(recog_wReward_linMod_CHRaboveZero), Terms=7)
+
+```
+
+### Excluding Trials with Short/Long Reaction Times
+```{r exclRT_learn}
+
+# find mean and 2.5 SDs above mean
+# -0.2001853 log sec (0.8185791 sec)
+meanlogRT_p1=mean(allSubsBothPhases$p1_choiceRT_log)
+sdLogRT_p1 = sd(allSubsBothPhases$p1_choiceRT_log)
+# mean + 2.5 SD = 2.578714 log sec (13.18018 sec)
+upperLimLogRT_p1 = meanlogRT_p1 + 2.5*sdLogRT_p1
+upperLimRT_p1 = exp(upperLimLogRT_p1)
+
+# median RT: 0.84s
+median(allSubsBothPhases$p1_choiceRT)
+
+# longest RT
+max(allSubsBothPhases$p1_choiceRT)
+
+# re-do learning phase accuracy analysis excluding trials above threshold
+summary(learning_linMod_RTlimit <- glmer(p1_correct ~ galaxy*p1_trial_scaled*ageCent +
+                                     (1+galaxy*p1_trial_scaled|subID), 
+                                   data = allSubsBothPhases %>% 
+                                   filter(agency == 1,
+                                          p1_choiceRT_log < upperLimLogRT_p1), 
+                                   family = binomial,
+                                   control=glmerControl(optimizer="bobyqa",
+                                             optCtrl=list(maxfun=100000))))
+
+# significant predictors (same as including outlier trials):
+# gRand>gEqual 
+## X2 = 27.0, df = 1, P(> X2) = 2e-07
+wald.test(b=learning_linMod_RTlimit@beta, Sigma=vcov(learning_linMod_RTlimit), Terms=2)
+
+# gYoked>gEqual 
+## X2 = 37.9, df = 1, P(> X2) = 7.5e-10
+wald.test(b=learning_linMod_RTlimit@beta, Sigma=vcov(learning_linMod_RTlimit), Terms=3)
+
+# (gRand>gEqual)*trial
+## X2 = 19.4, df = 1, P(> X2) = 1e-05
+wald.test(b=learning_linMod_RTlimit@beta, Sigma=vcov(learning_linMod_RTlimit), Terms=6)
+
+# (gYoked>gEqual)*trial
+## X2 = 21.4, df = 1, P(> X2) = 3.8e-06
+wald.test(b=learning_linMod_RTlimit@beta, Sigma=vcov(learning_linMod_RTlimit), Terms=7)
+```
+
+```{r exclRT_mem}
+
+# Log transform RTs so that the distribution is normal
+allSubsPhase2 <- allSubsPhase2 %>% mutate(isOld_RT_log = log(isOld_RT))
+
+# find mean and 2.5 SDs above mean
+# .742 log sec (2.101171 sec)
+meanlogRT_p2=mean(allSubsPhase2$isOld_RT_log)
+sdLogRT_p2 = sd(allSubsPhase2$isOld_RT_log)
+# mean + 2.5 SD = 2.336544 log sec (10.34542 sec)
+upperLimLogRT_p2 = meanlogRT_p2 + 2.5*sdLogRT_p2
+upperLimRT_p2 = exp(upperLimLogRT_p2)
+lowerLimRT_p2 = .250
+
+# re-do analyses excluding trials for RT
+
+allSubsBothPhases <- allSubsBothPhases %>% mutate(respType = case_when(
+  isOld_saidOld==1 ~ "hit",
+  isOld_saidOld==0 ~ "miss",
+))
+
+testItems_RTlimit <- allSubsBothPhases %>% 
+  filter(
+    isOld_RT < upperLimRT_p2 &
+    isOld_RT > lowerLimRT_p2 &
+    p1_choiceRT < upperLimRT_p1) %>% 
+  group_by(subID,age,ageCent,ageCentSq,galaxy,agency,reward) %>% 
+  dplyr::summarize(
+  hits = sum(respType=="hit"),
+  nOld = n(),
+  HR = hits/nOld
+  )
+
+# isolate "new" items
+lureItems_RTlimit <- allSubsPhase2 %>% 
+  filter(isOld==0 &
+         isOld_RT < upperLimRT_p2 &
+         isOld_RT > lowerLimRT_p2) %>% 
+  group_by(subID,age,ageCent,ageCentSq) %>% dplyr::summarize(
+  fas = sum(respType=="fa"),
+  nNew = sum(isOld==0),
+  FAR = fas/nNew
+  )
+
+# merge old and new items; get agency benefit for each participant in each galaxy
+CHR_byGalaxyAgencyReward_RTlimit <- merge(testItems_RTlimit,lureItems_RTlimit) %>% 
+  mutate(CHR = HR-FAR) %>% 
+  group_by(subID,galaxy,reward) %>% 
+  mutate(agencyBenefit = CHR[agency==1] - CHR[agency==0])
+
+
+# linear age model
+recog_wReward_linMod_RTlimit <- lmer(CHR ~ galaxy*agency*reward*ageCent + 
+                                (1+agency*reward|subID), 
+                              data = CHR_byGalaxyAgencyReward_RTlimit,
+                             control=lmerControl(optimizer="bobyqa", 
+                                                 optCtrl=list(maxfun=100000)))
+
+
+# effect of reward
+## X2 = 5.1, df = 1, P(> X2) = 0.023
+wald.test(b=recog_wReward_linMod_RTlimit@beta, Sigma=vcov(recog_wReward_linMod_RTlimit), Terms=5)
+
+# gR>gE*agency
+## X2 = 4.3, df = 1, P(> X2) = 0.037
+wald.test(b=recog_wReward_linMod_RTlimit@beta, Sigma=vcov(recog_wReward_linMod_RTlimit), Terms=7)
+
+```
+
+### Exploratory High- and Low-Confidence Memory Analyses
+```{r memConf_HC}
+
+# isolate high conf "old" items
+testItems_HC <- allSubsPhase2 %>% 
+  filter(isOld==1, isOld_hiConf=="high conf") %>% 
+  group_by(subID,age,ageCent,ageCentSq,galaxy,agency,reward) %>% 
+  dplyr::summarize(
+    hits = sum(respType=="hit"),
+    misses = sum(respType=="miss"),
+    nOld = sum(isOld),
+    HR = hits/nOld
+  )
+
+# isolate high conf "new" items
+lureItems_HC <- allSubsPhase2 %>% 
+  filter(isOld==0, isOld_hiConf=="high conf") %>% 
+  group_by(subID,age,ageCent,ageCentSq) %>% 
+  dplyr::summarize(
+    fas = sum(respType=="fa"),
+    crs = sum(respType=="cr"),
+    nNew = sum(isOld==0),
+    FAR = fas/nNew
+  )
+
+# merge old and new (same as above) items; get agency benefit for each participant in each galaxy
+CHR_byGalaxyAgencyRewardConf <- merge(testItems_HC,lureItems_HC) %>% 
+  mutate(CHR = HR-FAR) 
+
+# high confidence responses only
+## remove random slopes bc LC model would not converge w random slopes
+summary(recog_wReward_linMod_hiConf <- lmer(CHR ~ galaxy*agency*reward*ageCent + 
+                                (1|subID), 
+                              data = CHR_byGalaxyAgencyRewardConf,
+                             control=lmerControl(optimizer="bobyqa", 
+                                                 optCtrl=list(maxfun=100000))))
+
+# main effect of reward
+## X2 = 10.6, df = 1, P(> X2) = 0.0011
+wald.test(b=recog_wReward_linMod_hiConf@beta, Sigma=vcov(recog_wReward_linMod_hiConf), Terms=5)
+
+# main effect of agency
+## X2 = 5.0, df = 1, P(> X2) = 0.025
+wald.test(b=recog_wReward_linMod_hiConf@beta, Sigma=vcov(recog_wReward_linMod_hiConf), Terms=4)
+```
+```{r memConf_LC}
+
+# isolate low conf "old" items
+testItems_LC <- allSubsPhase2 %>% 
+  filter(isOld==1, isOld_hiConf=="low conf") %>% 
+  group_by(subID,age,ageCent,ageCentSq,galaxy,agency,reward) %>% 
+  dplyr::summarize(
+    hits = sum(respType=="hit"),
+    misses = sum(respType=="miss"),
+    nOld = sum(isOld),
+    HR = hits/nOld
+  )
+
+# isolate low conf "new" items
+lureItems_LC <- allSubsPhase2 %>% 
+  filter(isOld==0, isOld_hiConf=="low conf") %>% 
+  group_by(subID,age,ageCent,ageCentSq) %>% 
+  dplyr::summarize(
+    fas = sum(respType=="fa"),
+    crs = sum(respType=="cr"),
+    nNew = sum(isOld==0),
+    FAR = fas/nNew
+  )
+
+# merge old and new (same as above) items; get agency benefit for each participant in each galaxy
+CHR_byGalaxyAgencyRewardConf <- merge(testItems_LC,lureItems_LC) %>% 
+  mutate(CHR = HR-FAR) 
+
+# high confidence responses only
+## remove random slopes bc LC model would not converge w random slopes
+summary(recog_wReward_linMod_loConf <- lmer(CHR ~ galaxy*agency*reward*ageCent + 
+                                (1|subID), 
+                              data = CHR_byGalaxyAgencyRewardConf,
+                             control=lmerControl(optimizer="bobyqa", 
+                                                 optCtrl=list(maxfun=100000))))
+
+# gRand>gEqual
+## X2 = 6.3, df = 1, P(> X2) = 0.012
+wald.test(b=recog_wReward_linMod_loConf@beta, Sigma=vcov(recog_wReward_linMod_loConf), Terms=2)
+
+# (gRand>gEqual)*reward
+## X2 = 4.5, df = 1, P(> X2) = 0.034
+wald.test(b=recog_wReward_linMod_loConf@beta, Sigma=vcov(recog_wReward_linMod_loConf), Terms=9)
+
+# agency*reward
+## X2 = 4.7, df = 1, P(> X2) = 0.03
+wald.test(b=recog_wReward_linMod_loConf@beta, Sigma=vcov(recog_wReward_linMod_loConf), Terms=11)
+
+# (gRand>gEqual)*agency*reward
+## X2 = 4.4, df = 1, P(> X2) = 0.036
+wald.test(b=recog_wReward_linMod_loConf@beta, Sigma=vcov(recog_wReward_linMod_loConf), Terms=16)
+
+# (gRand>gEqual)*agency*reward*age
+## X2 = 4.7, df = 1, P(> X2) = 0.029
+wald.test(b=recog_wReward_linMod_loConf@beta, Sigma=vcov(recog_wReward_linMod_loConf), Terms=23)
+
+```
+
+
+### Exploratory d' Analyses
+```{r dprime}
+# calculate dprime
+dPrimeData <- dprime(n_hit = CHR_byGalaxyAgencyReward$hits,
+                     n_fa = CHR_byGalaxyAgencyReward$fas,
+                     n_miss = CHR_byGalaxyAgencyReward$misses,
+                     n_cr = CHR_byGalaxyAgencyReward$crs,
+                     n_targets = CHR_byGalaxyAgencyReward$nOld,
+                     n_distractors = CHR_byGalaxyAgencyReward$nNew)
+# add to CHR_byGalaxyAgencyReward
+CHR_byGalaxyAgencyReward$dPrime = dPrimeData$dprime
+
+# run model to predict d' instead of CHR
+summary(recog_wReward_linMod_dprime <- lmer(dPrime ~ galaxy*agency*reward*ageCent + 
+                                (1+agency+reward|subID), 
+                              data = CHR_byGalaxyAgencyReward,
+                             control=lmerControl(optimizer="bobyqa", 
+                                                 optCtrl=list(maxfun=100000))))
+
+# get stats for dprime model
+# effect of reward
+## X2 = 7.3, df = 1, P(> X2) = 0.0068
+wald.test(b=recog_wReward_linMod_dprime@beta, Sigma=vcov(recog_wReward_linMod_dprime), Terms=5)
+
+# effect of age (negative)
+## X2 = 4.5, df = 1, P(> X2) = 0.035
+wald.test(b=recog_wReward_linMod_dprime@beta, Sigma=vcov(recog_wReward_linMod_dprime), Terms=6)
+
+# interaction of galaxy (gR>gE)*agency
+## X2 = 4.5, df = 1, P(> X2) = 0.035
+wald.test(b=recog_wReward_linMod_dprime@beta, Sigma=vcov(recog_wReward_linMod_dprime), Terms=7)
+
+# for correlation between overall d' and CHR, see chunk "suppFig6"
+```
+
+## Supplementary Figure 5
+```{r suppFig5}
+
+# isolate "old" items
+testItems_byPerson <- allSubsPhase2 %>% filter(isOld==1) %>% group_by(subID,age) %>% dplyr::summarize(
+  hits = sum(respType=="hit"),
+  misses = sum(respType=="miss"),
+  nOld = sum(isOld),
+  HR = hits/nOld
+  )
+
+# isolate "new" items
+lureItems_byPerson <- allSubsPhase2 %>% filter(isOld==0) %>% group_by(subID,age) %>% dplyr::summarize(
+  fas = sum(respType=="fa"),
+  crs = sum(respType=="cr"),
+  nNew = sum(isOld==0),
+  FAR = fas/nNew
+  )
+
+# merge old and new items; get agency benefit for each participant in each galaxy
+CHR_byPerson <- merge(testItems_byPerson,lureItems_byPerson) 
+CHR_byPerson_longer <- CHR_byPerson %>% 
+  pivot_longer(cols=c(HR,FAR), names_to="respType", values_to = "respRate")
+
+
+# plot
+suppFig5 <- ggplot(data=CHR_byPerson_longer, aes(x=age, y = respRate, group = respType, 
+           color = respType, fill = respType)) + 
+  geom_point() + 
+  stat_smooth(method="lm") +
+  labs(fill="Response Type", 
+       color="Response Type",
+       x="Age",
+       y="Proportion Response") +
+  perri_theme() 
+
+```
+
+## Supplementary Figure 6
+```{r suppFig6}
+
+# calculate dprime
+dPrimeData_byPerson <- dprime(n_hit = CHR_byPerson$hits,
+                     n_fa = CHR_byPerson$fas,
+                     n_miss = CHR_byPerson$misses,
+                     n_cr = CHR_byPerson$crs,
+                     n_targets = CHR_byPerson$nOld,
+                     n_distractors = CHR_byPerson$nNew)
+# add to CHR_byPerson
+CHR_byPerson$dPrime = dPrimeData_byPerson$dprime
+
+CHR_byPerson <- CHR_byPerson %>% 
+  mutate(CHR=HR-FAR)
+
+# correlation between overall d' and overall CHR
+# correlation btwn CHR and dPrime --> highly correlated
+## t = 24.441, df = 94, p-value < 2.2e-16, r=0.9295337  
+cor.test(CHR_byPerson$CHR,CHR_byPerson$dPrime)
+
+# plot correlation
+suppFig6 <- ggplot(data=CHR_byPerson, 
+       aes(x=CHR,y=dPrime, color=age)) + 
+  geom_point() +
+  perri_theme() +
+  labs(x="Corrected Hit Rate",
+       y= "d'",
+       color="Age") +
+  theme(axis.title.y = element_text(angle = 0, vjust = .5))
+```
+
